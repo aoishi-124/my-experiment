@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>jsPsych Experiment</title>
+    <!-- jsPsych 7.3.4 CDN -->
+    <script src="https://unpkg.com/jspsych@7.3.4"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@1.1.3"></script>
+    <link href="https://unpkg.com/jspsych@7.3.4/css/jspsych.css" rel="stylesheet" type="text/css" />
+    <style>
+        /* 背景色を灰色に設定 */
+        body {
+            background-color: #808080;
+            color: white; /* テキストを読みやすくするため白に設定 */
+            margin: 0;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* 赤い円のスタイル定義 */
+        .red-circle {
+            width: 100px;
+            height: 100px;
+            background-color: #ff0000;
+            border-radius: 50%;
+            display: block;
+            margin: 0 auto;
+        }
+
+        /* jsPsychのコンテンツエリアを中央に固定 */
+        .jspsych-content-wrapper {
+            background-color: transparent !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="jspsych-target"></div>
+
+    <script>
+        /**
+         * jsPsychの初期化
+         */
+        const jsPsych = initJsPsych({
+            display_element: 'jspsych-target',
+            on_finish: function() {
+                // 実験終了時の処理が必要な場合はここに記述
+            }
+        });
+
+        // タイムラインの作成
+        const timeline = [];
+
+        /**
+         * 1. 赤い円を表示する試行
+         * html-keyboard-responseプラグインを使用
+         */
+        const circle_trial = {
+            type: jsPsychHtmlKeyboardResponse,
+            stimulus: '<div class="red-circle"></div>',
+            choices: [' '], // スペースキーのみ受け付け
+            prompt: '<p style="margin-top: 20px;">スペースキーを押して次へ進んでください</p>',
+            response_ends_trial: true // キーが押されるまで継続
+        };
+        timeline.push(circle_trial);
+
+        /**
+         * 2. 終了メッセージの表示
+         */
+        const end_message = {
+            type: jsPsychHtmlKeyboardResponse,
+            stimulus: '<h2>実験が終了しました。</h2><p>ご協力ありがとうございました。</p>',
+            choices: "NO_KEYS", // キー入力を受け付けない（または一定時間で終了させる設定も可能）
+            duration: 3000 // 3秒間表示して終了
+        };
+        timeline.push(end_message);
+
+        // 実験の実行
+        jsPsych.run(timeline);
+    </script>
+</body>
+</html>

@@ -9,7 +9,7 @@
     <link href="https://unpkg.com/jspsych@7.3.4/css/jspsych.css" rel="stylesheet" type="text/css" />
     <!-- 必要なプラグインの読み込み -->
     <script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@1.1.3"></script>
-    <script src="https://unpkg.com/@jspsych/plugin-fullscreen@1.2.1"></script>
+    <script src="https://unpkg.com/@jspsych/plugin-survey-text@1.1.3"></script>
     <style>
         body {
             background-color: #FFFFFF;
@@ -43,15 +43,38 @@
     <div id="jspsych-target"></div>
 
     <script>
+        // 指定されたGASウェブアプリのURL
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbwTrngL3Tl92O-pRaNwtQYjc-PGwm4GrsNlYpCBxGDelx9QdV0U6PblijIdID4WbyK_PA/exec";
+
         const jsPsych = initJsPsych({
             on_finish: function() {
-                // 実験終了時にCSV形式でデータを表示
-                jsPsych.data.displayData('csv');
+                // 自動送信が失敗した場合の予備、またはコンソールでのローカル確認用
+                const cleanData = prepareCleanData();
+                cleanData.displayData('csv');
             }
         });
 
         // タイムラインの配列
         let timeline = [];
+
+        // 1. 参加者情報入力画面 (IDの取得と全体プロパティへの自動保持)
+        const participant_info = {
+            type: jsPsychSurveyText,
+            questions: [
+                { prompt: "参加者ID（例：学籍番号）を入力してください：", required: true, name: 'subject_id' }
+            ],
+            button_label: "次へ",
+            on_finish: function(data) {
+                // 入力されたIDを取得
+                const id = data.response.subject_id;
+                // 以降のすべての試行データに自動的にプロパティとして付与する
+                jsPsych.data.addProperties({
+                    subject_id: id,
+                    timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) // 日本時間の「2026/2/18 14:22」形式に合わせる
+                });
+            }
+        };
+        timeline.push(participant_info);
 
         // 文字（表示される文字内容）と色（CSSのカラーコード）の定義
         const words = ["赤", "青", "緑"];
@@ -73,9 +96,6 @@
             }
         }
 
-        // 【修正】全画面化プラグインを削除
-        // プレビュー環境の権限ポリシー制限を回避するため、全画面化ステップをスキップします。
-
         // 教示画面
         timeline.push({
             type: jsPsychHtmlKeyboardResponse,
@@ -92,7 +112,7 @@
             post_trial_gap: 1000
         });
 
-        // 注視点
+        // 注視点 (500ms)
         const fixation = {
             type: jsPsychHtmlKeyboardResponse,
             stimulus: '<div class="fixation">+</div>',
@@ -112,12 +132,15 @@
             choices: ['r', 'b', 'g'],
             data: {
                 task: 'response',
+                word: jsPsych.timelineVariable('stimulus_word'),
+                color: jsPsych.timelineVariable('stimulus_color'),
                 condition: jsPsych.timelineVariable('condition'),
                 correct_response: jsPsych.timelineVariable('correct_response')
             },
             on_finish: function(data) {
-                // 正誤判定
-                data.correct = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response);
+                // 正誤判定を厳密に評価し、"TRUE" もしくは "FALSE" を大文字で格納（2枚目画像の表記に合わせる）
+                const isCorrect = jsPsych.pluginAPI.compareKeys(data.response, data.correct_response);
+                data.correct = isCorrect ? "TRUE" : "FALSE";
             }
         };
 
@@ -134,7 +157,176 @@
 
         timeline.push(test_procedure);
 
-        jsPsych.run(timeline);
+        // 2 & 3. 不要な行を除外したCSV用のデータ抽出・整形関数
+        // 2枚目の画像の並び順：rt, word, color, condition, subject_id, timestamp, correct
+        function prepareCleanData() {
+            const filteredData = jsPsych.data.get().filter({ task: 'response' });
+
+            // 理想の画像（2枚目）通りの並び順
+            const targetKeys = [
+                'rt',
+                'word', 
+                'color', 
+                'condition', 
+                'subject_id', 
+                'timestamp', 
+                'correct'
+            ];
+
+            const rawArray = filteredData.values();
+
+            const cleanedArray = rawArray.map(trial => {
+                let cleanTrial = {};
+                targetKeys.forEach(key => {
+                    cleanTrial[key] = (trial[key] !== undefined && trial[key] !== null) ? trial[key] : "";
+                });
+                return cleanTrial;
+            });
+
+            return {
+                csv: function() {
+                    if (cleanedArray.length === 0) {
+                        return targetKeys.join(",");
+                    }
+                    const headers = targetKeys.join(",");
+                    const rows = cleanedArray.map(trial => {
+                        return targetKeys.map(key => {
+                            // ダブルクォーテーションでの囲み処理
+                            const value = String(trial[key]).replace(/"/g, '""');
+                            return `"${value}"`;
+                        }).join(",");
+                    });
+                    return [headers, ...rows].join("\n");
+                },
+                displayData: function(format) {
+                    if (format === 'csv') {
+                        const csvContent = this.csv();
+                        const displayElement = jsPsych.getDisplayElement();
+                        
+                        let backupArea = document.getElementById("backup-csv-area");
+                        if (!backupArea) {
+                            backupArea = document.createElement("div");
+                            backupArea.id = "backup-csv-area";
+                            backupArea.style.margin = "20px auto";
+                            backupArea.style.padding = "15px";
+                            backupArea.style.maxWidth = "800px";
+                            backupArea.style.border = "1px solid #ccc";
+                            backupArea.style.borderRadius = "4px";
+                            backupArea.style.background = "#f9f9f9";
+                            backupArea.style.textAlign = "center";
+                            displayElement.appendChild(backupArea);
+                        }
+                        
+                        backupArea.innerHTML = `
+                            <h3 style="margin-top:0; font-size:18px; color:#333; text-align: left;">測定結果CSVデータ（バックアップ用）</h3>
+                            <textarea readonly style="width:100%; height:150px; font-family:monospace; font-size:12px; padding:10px; box-sizing:border-box; margin-bottom: 10px;">${csvContent}</textarea>
+                            <button id="copy-csv-btn" style="padding: 10px 20px; font-size: 14px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                                CSVデータをコピーする
+                            </button>
+                        `;
+
+                        const copyBtn = document.getElementById("copy-csv-btn");
+                        copyBtn.onclick = function() {
+                            const textarea = backupArea.querySelector("textarea");
+                            textarea.select();
+                            try {
+                                document.execCommand('copy');
+                                copyBtn.textContent = "コピーしました！";
+                                copyBtn.style.backgroundColor = "#28a745";
+                            } catch (err) {
+                                copyBtn.textContent = "コピー失敗、手動でコピーしてください";
+                                copyBtn.style.backgroundColor = "#dc3545";
+                            }
+                        };
+                    } else {
+                        filteredData.displayData(format);
+                    }
+                }
+            };
+        }
+
+        // 3. GASへの非同期データ送信
+        async function sendDataWithRetry(csvData, maxRetries = 3, initialDelay = 1000) {
+            const displayElement = jsPsych.getDisplayElement();
+            displayElement.innerHTML = `
+                <div style="font-size:22px; text-align:center; padding: 40px;">
+                    <p>データを送信しています。しばらくお待ちください...</p>
+                    <div style="margin-top: 20px; color: #666; font-size: 16px;">ブラウザを閉じずにそのままお待ちください。</div>
+                </div>`;
+
+            // POSTリクエストボディを、URLSearchParamsではなく単純なプレーンテキスト(CSVそのもの)として送信
+            // これにより、GAS側で無駄なURLデコード処理の手間や、余計なキー（"csvData="）の混入を防ぎます。
+            try {
+                await fetch(GAS_URL, {
+                    method: "POST",
+                    mode: "no-cors", 
+                    headers: {
+                        "Content-Type": "text/plain"
+                    },
+                    body: csvData
+                });
+
+                displayElement.innerHTML = `
+                    <div style="font-size:22px; text-align:center; color: #2e7d32; padding: 40px; line-height: 1.6;">
+                        <h3>実験が正常に完了しました！</h3>
+                        <p>測定データはスプレッドシートへ自動保存されました。</p>
+                        <p>ご協力ありがとうございました。このウィンドウを閉じて構いません。</p>
+                    </div>`;
+                return;
+
+            } catch (error) {
+                console.warn("送信失敗。リトライを開始します:", error);
+                
+                let delay = initialDelay;
+                for (let i = 0; i < maxRetries; i++) {
+                    try {
+                        displayElement.innerHTML = `
+                            <div style="font-size:22px; text-align:center; padding: 40px;">
+                                <p>接続試行中... (再試行 ${i + 1}/${maxRetries} 回目)</p>
+                                <p style="font-size: 16px; color: #d32f2f;">一時的なネットワーク切断の可能性があります。接続を維持しています。</p>
+                            </div>`;
+                        
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        
+                        await fetch(GAS_URL, {
+                            method: "POST",
+                            mode: "no-cors",
+                            headers: {
+                                "Content-Type": "text/plain"
+                            },
+                            body: csvData
+                        });
+
+                        displayElement.innerHTML = `
+                            <div style="font-size:22px; text-align:center; color: #2e7d32; padding: 40px; line-height: 1.6;">
+                                <h3>実験が正常に完了しました！</h3>
+                                <p>測定データはスプレッドシートへ自動保存されました。</p>
+                                <p>ご協力ありがとうございました。このウィンドウを閉じて構いません。</p>
+                            </div>`;
+                        return;
+                    } catch (retryError) {
+                        delay *= 2;
+                    }
+                }
+
+                displayElement.innerHTML = `
+                    <div style="font-size:22px; text-align:center; color: #d32f2f; padding: 40px; line-height: 1.6;">
+                        <h3>データの自動送信に失敗しました</h3>
+                        <p style="font-size: 16px; color: #333;">ネットワークの通信状況を確認してください。以下のCSVデータをコピーし、手動で保存してください。</p>
+                    </div>`;
+                
+                const cleanData = prepareCleanData();
+                cleanData.displayData('csv');
+            }
+        }
+
+        // 実験の実行と終了処理
+        jsPsych.run(timeline).then(() => {
+            // 本試行のみを抽出し、CSV文字列に変換
+            const cleanCsv = prepareCleanData().csv();
+            // GASへ自動送信を実行
+            sendDataWithRetry(cleanCsv);
+        });
 
     </script>
 </body>
